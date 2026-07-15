@@ -1,0 +1,18 @@
+{
+  "secret": "change_me",
+  "symbol": "{{ticker}}",
+  "timeframe": "{{interval}}",
+  "side": "SELL",
+  "entry": "{{close}}",
+  "stop_loss": 4066.0,
+  "take_profit_1": 4044.0,
+  "take_profit_2": 4035.0,
+  "take_profit_3": 4022.0,
+  "liquidity_sweep": true,
+  "mss": true,
+  "fvg": true,
+  "order_block": true,
+  "session": "NEW_YORK",
+  "rr": 3.0,
+  "notes": "Example only"
+}
