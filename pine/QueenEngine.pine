@@ -1,0 +1,252 @@
+//@version=6
+indicator("Queen Engine", "Queen Engine", overlay=true, max_labels_count=100, max_lines_count=80)
+
+// Queen Engine is a signal engine, not a promise of performance. Test every setting before live use.
+
+// -------------------------
+// Inputs
+// -------------------------
+secretInput = input.string("change_me", "Webhook secret")
+modeInput = input.string("Auto", "Mode", options=["Auto", "Scalping", "Intraday"])
+htfInput = input.string("Auto", "Higher timeframe", options=["Auto", "15", "60", "240", "D"])
+minScoreInput = input.int(80, "Minimum Queen Score", minval=50, maxval=100)
+useFvgInput = input.bool(true, "Score FVG confirmation")
+useObInput = input.bool(true, "Score Order Block confirmation")
+useSessionInput = input.bool(true, "Score London/New York timing")
+londonSession = input.session("0700-1100", "London session")
+nySession = input.session("1300-1700", "New York session")
+pivotLen = input.int(3, "Structure pivot length", minval=2, maxval=10)
+atrLen = input.int(14, "ATR length", minval=5, maxval=50)
+atrBuffer = input.float(0.35, "Stop ATR buffer", minval=0.1, maxval=2.0, step=0.05)
+maxAtrExtension = input.float(1.15, "Max entry extension in ATR", minval=0.25, maxval=3.0, step=0.05)
+duplicateBars = input.int(12, "Duplicate alert lockout bars", minval=1, maxval=100)
+showLevels = input.bool(true, "Show latest trade levels")
+showDashboard = input.bool(true, "Show compact dashboard")
+
+// -------------------------
+// Market and mode guards
+// -------------------------
+symbolUpper = str.upper(syminfo.ticker)
+isXau = str.contains(symbolUpper, "XAUUSD")
+isUs100 = str.contains(symbolUpper, "US100")
+symbolAllowed = isXau or isUs100
+
+is5m = timeframe.isminutes and timeframe.multiplier == 5
+is15m = timeframe.isminutes and timeframe.multiplier == 15
+is1h = timeframe.isminutes and timeframe.multiplier == 60
+tfAllowed = is5m or is15m or is1h
+
+mode = modeInput == "Auto" ? (is5m ? "Scalping" : "Intraday") : modeInput
+modeAllowed = (mode == "Scalping" and is5m) or (mode == "Intraday" and (is15m or is1h))
+minRr = mode == "Scalping" ? 2.0 : 3.0
+htf = htfInput == "Auto" ? (mode == "Scalping" ? "15" : "240") : htfInput
+
+// -------------------------
+// Core calculations
+// -------------------------
+emaFast = ta.ema(close, 21)
+emaSlow = ta.ema(close, 50)
+atr = ta.atr(atrLen)
+rsi = ta.rsi(close, 14)
+[macdLine, signalLine, _] = ta.macd(close, 12, 26, 9)
+
+htfClose = request.security(syminfo.tickerid, htf, close, barmerge.gaps_off, barmerge.lookahead_off)
+htfEmaFast = request.security(syminfo.tickerid, htf, ta.ema(close, 50), barmerge.gaps_off, barmerge.lookahead_off)
+htfEmaSlow = request.security(syminfo.tickerid, htf, ta.ema(close, 200), barmerge.gaps_off, barmerge.lookahead_off)
+trendBull = htfClose > htfEmaFast and htfEmaFast > htfEmaSlow
+trendBear = htfClose < htfEmaFast and htfEmaFast < htfEmaSlow
+
+pivotHigh = ta.pivothigh(high, pivotLen, pivotLen)
+pivotLow = ta.pivotlow(low, pivotLen, pivotLen)
+lastSwingHigh = ta.valuewhen(not na(pivotHigh), pivotHigh, 0)
+lastSwingLow = ta.valuewhen(not na(pivotLow), pivotLow, 0)
+prevSwingHigh = ta.valuewhen(not na(pivotHigh), pivotHigh, 1)
+prevSwingLow = ta.valuewhen(not na(pivotLow), pivotLow, 1)
+
+mssBull = not na(lastSwingHigh) and ta.crossover(close, lastSwingHigh)
+mssBear = not na(lastSwingLow) and ta.crossunder(close, lastSwingLow)
+
+sweepBull = not na(prevSwingLow) and low < prevSwingLow and close > prevSwingLow
+sweepBear = not na(prevSwingHigh) and high > prevSwingHigh and close < prevSwingHigh
+
+momentumBull = close > emaFast and emaFast > emaSlow and rsi > 52 and macdLine > signalLine
+momentumBear = close < emaFast and emaFast < emaSlow and rsi < 48 and macdLine < signalLine
+
+atrPercent = atr / close * 100.0
+volatilityOk = atrPercent > 0.03 and atrPercent < (isXau ? 0.9 : 1.4)
+notLate = atr > 0 and math.abs(close - emaFast) <= atr * maxAtrExtension and math.abs(close - open) <= atr * 1.4
+
+inLondon = not na(time(timeframe.period, londonSession))
+inNewYork = not na(time(timeframe.period, nySession))
+sessionName = inLondon ? "LONDON" : inNewYork ? "NEW_YORK" : "OTHER"
+sessionOk = inLondon or inNewYork
+
+fvgBull = low > high[2]
+fvgBear = high < low[2]
+
+// A compact order-block proxy: the latest opposite candle is useful only when price breaks away from it.
+lastBearHigh = ta.valuewhen(close < open, high, 0)
+lastBearLow = ta.valuewhen(close < open, low, 0)
+lastBullHigh = ta.valuewhen(close > open, high, 0)
+lastBullLow = ta.valuewhen(close > open, low, 0)
+obBull = not na(lastBearHigh) and close > lastBearHigh and low <= lastBearHigh
+obBear = not na(lastBullLow) and close < lastBullLow and high >= lastBullLow
+
+// -------------------------
+// Weighted decision model
+// -------------------------
+scoreBull = 0
+scoreBull += trendBull ? 20 : 0
+scoreBull += mssBull ? 20 : 0
+scoreBull += sweepBull ? 18 : 0
+scoreBull += momentumBull ? 17 : 0
+scoreBull += volatilityOk ? 10 : 0
+scoreBull += useSessionInput and sessionOk ? 8 : 0
+scoreBull += useFvgInput and fvgBull ? 4 : 0
+scoreBull += useObInput and obBull ? 3 : 0
+
+scoreBear = 0
+scoreBear += trendBear ? 20 : 0
+scoreBear += mssBear ? 20 : 0
+scoreBear += sweepBear ? 18 : 0
+scoreBear += momentumBear ? 17 : 0
+scoreBear += volatilityOk ? 10 : 0
+scoreBear += useSessionInput and sessionOk ? 8 : 0
+scoreBear += useFvgInput and fvgBear ? 4 : 0
+scoreBear += useObInput and obBear ? 3 : 0
+
+baseAllowed = symbolAllowed and tfAllowed and modeAllowed and notLate and barstate.isconfirmed
+buySetup = baseAllowed and scoreBull >= minScoreInput and scoreBull > scoreBear
+sellSetup = baseAllowed and scoreBear >= minScoreInput and scoreBear > scoreBull
+
+// -------------------------
+// Risk model
+// -------------------------
+entry = close
+buyStop = math.min(nz(lastSwingLow, low), low) - atr * atrBuffer
+sellStop = math.max(nz(lastSwingHigh, high), high) + atr * atrBuffer
+buyRisk = entry - buyStop
+sellRisk = sellStop - entry
+
+buyValidRisk = buyRisk > syminfo.mintick
+sellValidRisk = sellRisk > syminfo.mintick
+
+buyTp1 = entry + buyRisk * minRr
+buyTp2 = entry + buyRisk * (minRr + 1.0)
+buyTp3 = entry + buyRisk * (minRr + 2.0)
+sellTp1 = entry - sellRisk * minRr
+sellTp2 = entry - sellRisk * (minRr + 1.0)
+sellTp3 = entry - sellRisk * (minRr + 2.0)
+
+buySignal = buySetup and buyValidRisk
+sellSignal = sellSetup and sellValidRisk
+
+// -------------------------
+// Duplicate protection and alerts
+// -------------------------
+var string lastSetupKey = ""
+var int lastAlertBar = na
+
+roundToTick(value) =>
+    math.round(value / syminfo.mintick) * syminfo.mintick
+
+priceText(value) =>
+    str.tostring(roundToTick(value), format.mintick)
+
+boolText(value) =>
+    value ? "true" : "false"
+
+buildJson(side, stopLoss, tp1, tp2, tp3, liquiditySweep, mss, fvg, orderBlock, rrValue, scoreValue) =>
+    notes = "Queen Engine v1 | mode=" + mode + " | score=" + str.tostring(scoreValue) + " | no guaranteed win rate"
+    "{" +
+      "\"secret\":\"" + secretInput + "\"," +
+      "\"symbol\":\"" + syminfo.ticker + "\"," +
+      "\"timeframe\":\"" + timeframe.period + "\"," +
+      "\"side\":\"" + side + "\"," +
+      "\"entry\":" + priceText(entry) + "," +
+      "\"stop_loss\":" + priceText(stopLoss) + "," +
+      "\"take_profit_1\":" + priceText(tp1) + "," +
+      "\"take_profit_2\":" + priceText(tp2) + "," +
+      "\"take_profit_3\":" + priceText(tp3) + "," +
+      "\"liquidity_sweep\":" + boolText(liquiditySweep) + "," +
+      "\"mss\":" + boolText(mss) + "," +
+      "\"fvg\":" + boolText(fvg) + "," +
+      "\"order_block\":" + boolText(orderBlock) + "," +
+      "\"session\":\"" + sessionName + "\"," +
+      "\"rr\":" + str.tostring(rrValue, "#.##") + "," +
+      "\"notes\":\"" + notes + "\"" +
+    "}"
+
+buyKey = "BUY|" + str.tostring(ta.valuewhen(mssBull or sweepBull, bar_index, 0)) + "|" + priceText(buyStop)
+sellKey = "SELL|" + str.tostring(ta.valuewhen(mssBear or sweepBear, bar_index, 0)) + "|" + priceText(sellStop)
+canAlert(key) =>
+    key != lastSetupKey and (na(lastAlertBar) or bar_index - lastAlertBar >= duplicateBars)
+
+buyAlert = buySignal and canAlert(buyKey)
+sellAlert = sellSignal and canAlert(sellKey)
+
+alertcondition(buyAlert, title="Queen Engine BUY", message="Queen Engine BUY signal. Use the 'Any alert() function call' condition for webhook JSON.")
+alertcondition(sellAlert, title="Queen Engine SELL", message="Queen Engine SELL signal. Use the 'Any alert() function call' condition for webhook JSON.")
+
+if buyAlert
+    alert(buildJson("BUY", buyStop, buyTp1, buyTp2, buyTp3, sweepBull, mssBull, fvgBull, obBull, minRr, scoreBull), alert.freq_once_per_bar_close)
+    lastSetupKey := buyKey
+    lastAlertBar := bar_index
+
+if sellAlert
+    alert(buildJson("SELL", sellStop, sellTp1, sellTp2, sellTp3, sweepBear, mssBear, fvgBear, obBear, minRr, scoreBear), alert.freq_once_per_bar_close)
+    lastSetupKey := sellKey
+    lastAlertBar := bar_index
+
+// -------------------------
+// Clean chart output
+// -------------------------
+plotshape(buyAlert, title="BUY", text="BUY", style=shape.labelup, location=location.belowbar, color=color.new(color.lime, 0), textcolor=color.black, size=size.small)
+plotshape(sellAlert, title="SELL", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
+
+var line entryLine = na
+var line stopLine = na
+var line tp1Line = na
+var line tp2Line = na
+var line tp3Line = na
+
+clearLevels() =>
+    line.delete(entryLine)
+    line.delete(stopLine)
+    line.delete(tp1Line)
+    line.delete(tp2Line)
+    line.delete(tp3Line)
+
+if showLevels and buyAlert
+    clearLevels()
+    entryLine := line.new(bar_index, entry, bar_index + 20, entry, color=color.new(color.white, 35), width=1)
+    stopLine := line.new(bar_index, buyStop, bar_index + 20, buyStop, color=color.new(color.red, 10), width=1)
+    tp1Line := line.new(bar_index, buyTp1, bar_index + 20, buyTp1, color=color.new(color.lime, 15), width=1)
+    tp2Line := line.new(bar_index, buyTp2, bar_index + 20, buyTp2, color=color.new(color.lime, 35), width=1)
+    tp3Line := line.new(bar_index, buyTp3, bar_index + 20, buyTp3, color=color.new(color.lime, 55), width=1)
+
+if showLevels and sellAlert
+    clearLevels()
+    entryLine := line.new(bar_index, entry, bar_index + 20, entry, color=color.new(color.white, 35), width=1)
+    stopLine := line.new(bar_index, sellStop, bar_index + 20, sellStop, color=color.new(color.red, 10), width=1)
+    tp1Line := line.new(bar_index, sellTp1, bar_index + 20, sellTp1, color=color.new(color.lime, 15), width=1)
+    tp2Line := line.new(bar_index, sellTp2, bar_index + 20, sellTp2, color=color.new(color.lime, 35), width=1)
+    tp3Line := line.new(bar_index, sellTp3, bar_index + 20, sellTp3, color=color.new(color.lime, 55), width=1)
+
+// Dashboard stays intentionally small so the price chart remains readable.
+var table dash = table.new(position.top_right, 2, 7, border_width=1)
+if showDashboard and barstate.islast
+    table.cell(dash, 0, 0, "Queen", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 1, 0, mode, text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(dash, 0, 1, "Symbol", text_color=color.white)
+    table.cell(dash, 1, 1, symbolAllowed ? "OK" : "XAU/US100 only", text_color=symbolAllowed ? color.lime : color.red)
+    table.cell(dash, 0, 2, "TF", text_color=color.white)
+    table.cell(dash, 1, 2, modeAllowed ? timeframe.period : "5/15/60 only", text_color=modeAllowed ? color.lime : color.red)
+    table.cell(dash, 0, 3, "BUY", text_color=color.white)
+    table.cell(dash, 1, 3, str.tostring(scoreBull), text_color=scoreBull >= minScoreInput ? color.lime : color.gray)
+    table.cell(dash, 0, 4, "SELL", text_color=color.white)
+    table.cell(dash, 1, 4, str.tostring(scoreBear), text_color=scoreBear >= minScoreInput ? color.red : color.gray)
+    table.cell(dash, 0, 5, "Session", text_color=color.white)
+    table.cell(dash, 1, 5, sessionName, text_color=sessionOk ? color.lime : color.gray)
+    table.cell(dash, 0, 6, "Late", text_color=color.white)
+    table.cell(dash, 1, 6, notLate ? "No" : "Yes", text_color=notLate ? color.lime : color.orange)

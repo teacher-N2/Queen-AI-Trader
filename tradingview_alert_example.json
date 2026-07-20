@@ -1,18 +1,43 @@
 {
   "secret": "change_me",
+  "schema_version": "1.0",
+  "engine": "Queen Engine",
+  "engine_version": "2.0",
+  "signal_id": "SIGNAL|TRADE_OPENED_SIGNAL|TRADE|example|OPENED",
+  "event_id": "Trade|TRADE|example|TRADE_OPENED|12345",
+  "setup_id": "SETUP|example",
+  "entry_id": "ENTRY|example",
+  "trade_id": "TRADE|example",
+  "timestamp": 1720000000000,
   "symbol": "{{ticker}}",
+  "exchange": "{{exchange}}",
   "timeframe": "{{interval}}",
-  "side": "SELL",
-  "entry": "{{close}}",
-  "stop_loss": 4066.0,
-  "take_profit_1": 4044.0,
-  "take_profit_2": 4035.0,
-  "take_profit_3": 4022.0,
-  "liquidity_sweep": true,
-  "mss": true,
-  "fvg": true,
-  "order_block": true,
+  "event": "TRADE_OPENED_SIGNAL",
+  "direction": "BULLISH",
+  "action": "LONG",
+  "actionability": "ACTIONABLE",
+  "entry_price": 3362.5,
+  "stop_price": 3356.2,
+  "targets": [
+    {
+      "name": "TP1",
+      "price": 3368.0
+    },
+    {
+      "name": "TP2",
+      "price": 3374.0
+    },
+    {
+      "name": "TP3",
+      "price": 3381.0
+    }
+  ],
+  "remaining_position": 100.0,
+  "execution_window": "OPTIMAL_WINDOW",
   "session": "NEW_YORK",
-  "rr": 3.0,
-  "notes": "Example only"
+  "reason_codes": [
+    "TRADE_OPENED",
+    "TRIGGER_CONFIRMED"
+  ],
+  "payload_signature_version": "shared-secret-v1"
 }

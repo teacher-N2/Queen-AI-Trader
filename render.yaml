@@ -1,0 +1,52 @@
+services:
+  - type: web
+    name: queen-ai-trader
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: APP_NAME
+        value: Queen AI Trader
+      - key: APP_VERSION
+        value: 0.9.0-personal-operations
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LOG_FORMAT
+        value: json
+      - key: MAX_REQUEST_BODY_BYTES
+        value: "262144"
+      - key: ALLOWED_HOSTS
+        value: queen-ai-trader.onrender.com
+      - key: ALLOW_UNSAFE_WILDCARD_HOSTS
+        value: "false"
+      - key: WEBHOOK_OPERATION_LEASE_SECONDS
+        value: "120"
+      - key: DELIVERY_OPERATION_LEASE_SECONDS
+        value: "120"
+      - key: WEBHOOK_SHARED_SECRET
+        sync: false
+      - key: WEBHOOK_SIGNATURE_SECRET
+        sync: false
+      - key: REQUIRE_WEBHOOK_SIGNATURE
+        value: "false"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_IDS
+        sync: false
+      - key: TELEGRAM_DEFAULT_CHAT_ID
+        sync: false
+      - key: PERSONAL_OPERATIONS_MODE
+        value: "true"
+      - key: PAPER_SIGNAL_MODE
+        value: PAPER_SIGNAL
+      - key: SIGNALS_ENABLED
+        value: "true"
+      - key: TRADE_UPDATES_ENABLED
+        value: "true"
+      - key: OPERATIONS_DASHBOARD_ENABLED
+        value: "true"
+      - key: TRADINGVIEW_MAX_SIGNAL_AGE_SECONDS
+        value: "180"
