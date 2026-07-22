@@ -18,7 +18,7 @@ class AuthenticationService:
         if not provided_secret:
             provided_secret = self._payload_secret(raw_body)
         if provided_secret:
-            if not hmac.compare_digest(provided_secret, settings.webhook_shared_secret):
+            if not hmac.compare_digest(provided_secret.strip(), settings.webhook_shared_secret.strip()):
                 raise AuthenticationError("invalid webhook shared secret")
         elif not settings.require_signature:
             raise AuthenticationError("missing webhook shared secret")
